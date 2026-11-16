@@ -1,0 +1,7 @@
+# BMAD: temporary answers file written by `bmad setup`
+.bmad-help-setup-modules*.toml
+
+# Python caches from BMAD scripts (uv run)
+__pycache__/
+*.py[cod]
+.pytest_cache/
