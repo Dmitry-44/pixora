@@ -1,8 +1,8 @@
 ---
 type: epic
-title: "Друзья получают картинку по тексту в проде"
+title: "Пользователь получает картинку по тексту"
 parent: initiative-pixora
-covers: [R1, R2, R3, R4, R5, R7, R8, R9, R10]
+covers: [R1, R2, R3, R4, R5, R7, R8, R10, R11]
 sources: []
 companions: []
 after: []
@@ -10,19 +10,20 @@ refined: false
 risk: medium
 ---
 
-# Друзья получают картинку по тексту в проде
+# Пользователь получает картинку по тексту
 
 ## Description
 
-Эпик ставит платформу и сквозной путь, на котором строится всё остальное: монорепо NestJS, Docker Compose, полную схему `generations` из spine, миграции и деплой на VPS вне РФ, а поверх них — bot (белый список, `/start`, приём) и worker с конвейером `generation.submit` → `generation.poll` → `generation.deliver` на `advance()`. Когда он готов, друзья пользуются ботом в проде; ошибки пока не классифицируются — эту часть берёт `epic-fault-tolerance`.
+Эпик ставит платформу и сквозной путь, на котором строится всё остальное: монорепо NestJS, Docker Compose, полную схему `generations` из spine, миграции и локальный запуск одной командой, а поверх них — bot (белый список, `/start`, приём) и worker с конвейером `generation.submit` → `generation.poll` → `generation.deliver` на `advance()`. Telegram-клиент сразу умеет ходить через прокси из конфига. Ошибки пока не классифицируются — эту часть берёт `epic-fault-tolerance`, деплой на VPS — `epic-vps-deploy`.
 
 ## Outcome
 
-Пользователь из белого списка в проде отправляет текст, сразу видит «принято» и получает изображение ответом на своё сообщение; любой сбой заканчивается текстом, а не молчанием.
+Пользователь из белого списка пишет боту, запущенному на локальном стеке, сразу видит «принято» и получает изображение ответом на своё сообщение; любой сбой заканчивается текстом, а не молчанием.
 
 ## Done when
 
-- На VPS через `docker compose` работают migrate, postgres, bot и worker и поднимаются сами после перезагрузки сервера (R9).
+- `docker compose up` поднимает migrate, postgres, bot и worker локально; упавший процесс поднимается сам (R11).
+- С прокси из конфига и без него bot получает обновления Telegram и отправляет ответы (R1; Constraints инициативы — прокси).
 - Пользователь из белого списка получает «принято», затем изображение ответом; изображение больше лимита фото приходит файлом; пользователь вне списка получает отказ и ничего не сохраняется (R1–R3).
 - `/start` отвечает приветствием с инструкцией, не-текстовое сообщение — подсказкой (R8).
 - Повторная доставка того же обновления не создаёт второй генерации; submit не вызывается, если id Polza уже сохранён (R5).
@@ -32,17 +33,20 @@ risk: medium
 ## Boundaries
 
 - Не входит: классификация ошибок Polza и Telegram, повторы с бюджетом, точные тексты по `failure_reason`, общий дедлайн 30 минут, dead letter, корректное завершение по SIGTERM, демонстрация отказов, `trace_id` и уровни ошибок в логах — всё это `epic-fault-tolerance`.
-- Touch point: Telegram Bot API — long polling и отправка; владелец — этот эпик.
+- Не входит: запуск на VPS — `epic-vps-deploy`.
+- Touch point: Telegram Bot API — long polling и отправка, через прокси или напрямую; владелец — этот эпик.
 - Touch point: Polza.ai — клиент Media API (создание, опрос, скачивание); владелец — этот эпик.
-- Must not change: схема `generations` создаётся целиком по spine, чтобы эпику 2 не понадобились свои миграции.
+- Must not change: схема `generations` создаётся целиком по spine, чтобы эпику 2 не понадобились свои миграции; compose-файл один для local и prod.
 
 ## References
 
-- parent — _bmad-output/initiative-pixora/initiative-pixora.md, Requirements R1–R5, R7–R10
+- parent — _bmad-output/initiative-pixora/initiative-pixora.md, Requirements R1–R5, R7, R8, R10, R11
 - architecture — _bmad-output/initiative-pixora/architecture-pixora/architecture-pixora.md, AD-1–AD-5, AD-8–AD-11, «Consistency Conventions», «Structural Seed»
 
 ## Notes
 
-- Open question: доступны ли Polza API и CDN с выбранного VPS вне РФ; решается в первых историях эпика (из инициативы).
-- Open question: какая модель Polza и с какими параметрами; решается экспериментом к первому прод-запуску (из инициативы).
+- Decision: 2026-11-16 — прокси для Telegram — VLESS; параметры автор внесёт в env при разработке.
+- Open question: где работает локальный клиент VLESS (xray или sing-box) с SOCKS5- или HTTP-входом — сервисом в compose или на хосте; решается в первой истории эпика (из инициативы).
+- Open question: какая модель Polza и с какими параметрами; решается экспериментом к первому запуску (из инициативы).
 - Decision: 2026-11-16 — до эпика 2 любая ошибка Polza или Telegram завершает генерацию без повторов текстом «сервис временно недоступен»; задачу, прерванную рестартом, подхватывает очередь pg-boss.
+- Decision: 2026-11-16 — целевая среда эпика — локальный Docker Compose, не VPS.
