@@ -1,0 +1,89 @@
+[[entry]]
+id = 1
+type = "story"
+title = "Каркас монорепо и стек в compose"
+description = "NestJS-монорепо (apps/bot, apps/worker, libs/platform) с конфигом из env и валидацией схемой, JSON-логами pino, Drizzle, полной схемой generations по spine и миграцией drizzle-kit; один docker-compose.yml поднимает migrate, postgres, bot и worker с restart unless-stopped, healthcheck postgres и depends_on. Шаг человека: автор ставит Docker и заполняет .env из .env.example."
+verify = "`docker compose up` на чистой машине: migrate завершается успешно, в базе таблица generations с UNIQUE (chat_id, message_id) и CHECK на status и failure_reason, bot и worker пишут JSON-строку старта; с невалидным env процесс не стартует (покрыто тестом валидации конфига); после `docker kill` worker поднимается сам."
+covers = ["R9"]
+after = []
+hitl = true
+risk = "low"
+
+[[entry]]
+id = 2
+type = "story"
+title = "Бот на связи через прокси"
+description = "Поверх каркаса истории 1: apps/bot получает обновления long polling, libs/telegram отправляет ответы; оба ходят через прокси из env (вход xray на хосте) или напрямую без него. Первым шагом белый список ALLOWED_TELEGRAM_USER_IDS; /start — приветствие с инструкцией, не-текст — подсказка, ответы reply на исходное сообщение. Белый список и путь отправки libs/telegram использует история 3. Шаг человека: автор получает токен у BotFather, вносит в .env токен, адрес входа xray и свой Telegram id."
+verify = "С адресом прокси в env и без него: /start даёт приветствие, фото — подсказку прислать текст, пользователь вне списка — отказ; адреса прокси и токена нет в логах; обработчики белого списка, /start и не-текста покрыты тестами с фейковым клиентом Telegram."
+covers = ["R1", "R2", "R7"]
+after = [1]
+hitl = true
+risk = "medium"
+notes = ["Проверяет допущение эпика: вход xray на хосте доступен из контейнеров (например, по host.docker.internal)."]
+
+[[entry]]
+id = 3
+type = "story"
+title = "Сквозной путь от текста к изображению"
+description = "Tracer bullet поверх бота истории 2: bot в одной транзакции создаёт генерацию в accepted и ставит generation.submit, затем отвечает «принято»; worker проводит её через submit → poll → deliver на advance(). История добавляет в libs/platform pg-boss и очереди generation.* (stately, singletonKey), строит клиент Polza Media API в libs/polza за интерфейсом и тестовую основу — Postgres в контейнере и фейковые клиенты libs/polza и libs/telegram. createAccepted и submit дорабатывает история 4, deliver — история 5, опции очередей — история 7. Шаг человека: автор получает ключ Polza, пополняет баланс, подбирает model_params для Nano Banana 2.1 и проверяет путь живым сообщением."
+verify = "Пользователь из белого списка пишет текст в Telegram на локальном стеке: сразу приходит «принято», затем изображение ответом на сообщение; второе сообщение, отправленное во время генерации, получает «принято» сразу; строка generations в completed с заполненными polza_generation_id, result_url и delivered_at; сообщение пользователя вне списка не создаёт строки; обработчики submit, poll и deliver покрыты тестами против реального Postgres с фейковыми клиентами."
+covers = ["R1", "R2", "R3"]
+after = [2]
+hitl = true
+risk = "high"
+notes = ["Модель — Nano Banana 2.1 (POLZA_MODEL).", "Дополнительная проверка: строка generations хранит user_prompt как есть, model_prompt = user_prompt, model_params из конфига и model = POLZA_MODEL (spine AD-10)."]
+
+[[entry]]
+id = 4
+type = "story"
+title = "Одно сообщение — одна платная генерация"
+description = "Дорабатывает createAccepted и submit истории 3: INSERT … ON CONFLICT (chat_id, message_id) DO NOTHING, submit и «принято» только для новой строки; submit вызывает Polza только в accepted с пустым polza_generation_id, осиротевший id при нуле обновлённых строк пишется в лог уровнем error. Тесты — на основе из истории 3."
+verify = "Тест против реального Postgres: повторная доставка того же обновления даёт одну строку, одно «принято» и один вызов фейкового Polza; задача submit для генерации с сохранённым id завершается без вызова Polza."
+covers = ["R5"]
+after = [3]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 5
+type = "story"
+title = "Большое изображение приходит файлом, доставка не повторяется"
+description = "Дорабатывает deliver истории 3: sendDocument, когда файл больше 10 MB или сторона больше лимита фото Telegram, иначе sendPhoto; при заполненном delivered_at deliver ничего не отправляет. Тесты — на основе из истории 3."
+verify = "Тест с фейковыми клиентами: изображение 12 MB и изображение со стороной больше лимита фото уходят через sendDocument, обычное 2 MB — через sendPhoto; повторный запуск deliver для доставленной генерации ничего не отправляет."
+covers = ["R1"]
+after = [3]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 6
+type = "story"
+title = "Любой сбой заканчивается текстом"
+description = "Дорабатывает обработчики историй 3–5, без повторов: ошибка Polza на submit или poll, status failed или cancelled, completed без url, сбой скачивания, ошибка Telegram при отправке фото и опрос дольше 10 минут переводят генерацию в failed с failure_reason и ставят deliver, который отправляет «сервис временно недоступен»; если не уходит и текст — записывается delivery_failed_at. Ошибка Telegram при отправке фото — completed → failed с provider_unavailable (отступление от AD-11, Decision в эпике)."
+verify = "Тесты с фейковыми клиентами для каждого сбоя: пользователь получает «сервис временно недоступен» reply, строка в failed с failure_reason из перечня spine; при сбое отправки текста заполнен delivery_failed_at; сырой текст Polza в сообщение не попадает."
+covers = ["R6"]
+after = [4, 5]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 7
+type = "story"
+title = "Рестарт worker посреди генерации, путь виден в логах"
+description = "Дорабатывает опции очередей истории 3: задачи pg-boss с expireInSeconds 300 и повтором подхватываются после рестарта worker; каждая строка лога конвейера содержит generationId, queue и attempts. Шаг человека: автор перезапускает worker на живом стеке посреди генерации."
+verify = "На локальном стеке `docker compose restart worker` во время опроса: генерация доходит до изображения у пользователя; `docker compose logs` с фильтром по generationId показывает submit, poll и deliver с queue и attempts; тест проверяет, что строки лога обработчиков содержат эти поля."
+covers = ["R4", "R8"]
+after = [6]
+hitl = true
+risk = "medium"
+
+[[entry]]
+id = 8
+type = "story"
+title = "Refactor sweep"
+description = "Только уборка, отложенная планами и ревью историй 1–7; объём фиксируется при старте, перенесённая из другой истории функциональность — новая история."
+verify = "Все тесты зелёные; `docker compose up` и сквозной путь из истории 3 работают как до чистки."
+covers = []
+after = [1, 2, 3, 4, 5, 6, 7]
+hitl = false
+risk = "low"
