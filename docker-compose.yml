@@ -1,0 +1,59 @@
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '5'
+
+x-app: &app
+  build: .
+  image: pixora:latest
+  environment:
+    DATABASE_URL: ${DATABASE_URL}
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+  logging: *logging
+
+x-app-service: &app-service
+  <<: *app
+  restart: unless-stopped
+  init: true
+  stop_grace_period: 90s
+  depends_on:
+    postgres:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:18.7
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+
+  migrate:
+    <<: *app
+    command: ['node_modules/.bin/drizzle-kit', 'migrate']
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  bot:
+    <<: *app-service
+    command: ['node', 'dist/apps/bot/main.js']
+
+  worker:
+    <<: *app-service
+    command: ['node', 'dist/apps/worker/main.js']
+
+volumes:
+  pgdata:
